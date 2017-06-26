@@ -14,11 +14,9 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.TableName;
-import org.apache.hadoop.hbase.client.Admin;
-import org.apache.hadoop.hbase.client.Connection;
-import org.apache.hadoop.hbase.client.ConnectionFactory;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -96,45 +94,50 @@ public class LoadbalancerApplication {
 
     @PostConstruct
     public void initHBase() throws IOException {
-        Configuration conf = HBaseConfiguration.create();
-        Connection connection = null;
+        createHBaseTables();
+        fillHBaseTables();
+    }
+
+    public void createHBaseTables() throws IOException {
+        HBaseAdmin admin = null;
         try {
-            connection = ConnectionFactory.createConnection(conf);
-            createHBaseTables(connection);
-            fillHBaseTables(connection);
+            HTableDescriptor tableDescriptor = new HTableDescriptor(TableName.valueOf("views_total_count"));
+            tableDescriptor.addFamily(new HColumnDescriptor("item"));
+            Configuration config = HBaseConfiguration.create();
+            admin = new HBaseAdmin(config);
+            admin.createTable(tableDescriptor);
+        }
+        catch (Exception e) {
+            logger.error(e.getMessage());
         }
         finally {
-            if (connection != null) {
-                connection.close();
+            if (admin != null) {
+                admin.close();
             }
         }
     }
 
-    public void createHBaseTables(Connection conn) throws IOException {
-        Admin admin = conn.getAdmin();
-        HTableDescriptor tableDescriptor = new HTableDescriptor(TableName.valueOf("views_total_count"));
-        tableDescriptor.addFamily(new HColumnDescriptor("item"));
-        admin.createTable(tableDescriptor);
-    }
-
-    public void fillHBaseTables(Connection conn) throws IOException {
+    public void fillHBaseTables() throws IOException  {
         final int max_video_id = 1000000;
         Random generator = new Random();
-        TableName tableName = TableName.valueOf("total_views");
-        Table table = conn.getTable(tableName);
-        HTableDescriptor tableDescriptor = new HTableDescriptor(TableName.valueOf("views_total_count"));
-        tableDescriptor.addFamily(new HColumnDescriptor("item"));
-        List<Put> rows = new ArrayList<Put>();
-        for (int i = 0; i < max_video_id; ++i) {
-            Put record = new Put(Bytes.toBytes(i));
-            int total_views = generator.nextInt(10000000);
-            record.addColumn(Bytes.toBytes("item"), Bytes.toBytes("item_id"), Bytes.toBytes(i));
-            record.addColumn(Bytes.toBytes("item"), Bytes.toBytes("views_count"), Bytes.toBytes(total_views));
+        Configuration config = HBaseConfiguration.create();
+        HTable hTable = new HTable(config, "views_total_count");
+        try {
+            List<Put> rows = new ArrayList<Put>(max_video_id);
+            for (int i = 0; i < max_video_id; ++i) {
+                Put record = new Put(Bytes.toBytes("" + i));
+                int total_views = generator.nextInt(10000000);
+                record.add(Bytes.toBytes("item"), Bytes.toBytes("item_id"), Bytes.toBytes("" + i));
+                record.add(Bytes.toBytes("item"), Bytes.toBytes("views_count"), Bytes.toBytes("" + total_views));
 
-            rows.add(record);
+                rows.add(record);
+            }
+            hTable.put(rows);
+            hTable.close();
         }
-        table.put(rows);
-        table.close();
+        catch (Exception e) {
+            logger.error(e.getMessage());
+        }
     }
 
 }
