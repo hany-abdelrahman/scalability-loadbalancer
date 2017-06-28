@@ -46,6 +46,7 @@ import com.lab.models.View;
 public class LoadbalancerApplication {
 
     private static final String GET_VIEWS_COUNT_METRIC = "view-request-loadbalancer";
+    private static final String TOTAL_VIEWS_TABLE = "views_total_count";
 
     @Value("${graphite.hostname}")
     private String graphiteHostName;
@@ -64,6 +65,15 @@ public class LoadbalancerApplication {
 
     @Autowired
     RestTemplate restTemplate;
+
+    @RequestMapping(value = "count", method = RequestMethod.GET)
+    public String countRequest(int itemId) {
+        Meter meter = metrics.meter(GET_VIEWS_COUNT_METRIC);
+        meter.mark();
+
+        String response = this.restTemplate.getForObject("http://backend/count", String.class, itemId);
+        return response;
+    }
 
     @RequestMapping(value = "view", method = RequestMethod.POST)
     public String saveRequest(@RequestBody View view) {
@@ -99,13 +109,17 @@ public class LoadbalancerApplication {
     }
 
     public void createHBaseTables() throws IOException {
+        final int REPLICATION_FACTOR = 3;
         HBaseAdmin admin = null;
         try {
-            HTableDescriptor tableDescriptor = new HTableDescriptor(TableName.valueOf("views_total_count"));
+            HTableDescriptor tableDescriptor = new HTableDescriptor(TableName.valueOf(TOTAL_VIEWS_TABLE));
             tableDescriptor.addFamily(new HColumnDescriptor("item"));
+            tableDescriptor.setRegionReplication(REPLICATION_FACTOR);
             Configuration config = HBaseConfiguration.create();
             admin = new HBaseAdmin(config);
-            admin.createTable(tableDescriptor);
+            if (!admin.tableExists(TOTAL_VIEWS_TABLE)) {
+                admin.createTable(tableDescriptor);
+            }
         }
         catch (Exception e) {
             logger.error(e.getMessage());
@@ -118,21 +132,26 @@ public class LoadbalancerApplication {
     }
 
     public void fillHBaseTables() throws IOException  {
+        final int BATCH_SIZE = 1000;
         final int max_video_id = 1000000;
+        final int max_views_count = 10000000;
         Random generator = new Random();
         Configuration config = HBaseConfiguration.create();
-        HTable hTable = new HTable(config, "views_total_count");
+        HTable hTable = new HTable(config, TOTAL_VIEWS_TABLE);
         try {
-            List<Put> rows = new ArrayList<Put>(max_video_id);
+            List<Put> rows = new ArrayList<Put>(BATCH_SIZE);
             for (int i = 0; i < max_video_id; ++i) {
-                Put record = new Put(Bytes.toBytes("" + i));
-                int total_views = generator.nextInt(10000000);
-                record.add(Bytes.toBytes("item"), Bytes.toBytes("item_id"), Bytes.toBytes("" + i));
-                record.add(Bytes.toBytes("item"), Bytes.toBytes("views_count"), Bytes.toBytes("" + total_views));
+                Put record = new Put(Bytes.toBytes(Integer.toString(i)));
+                int total_views = generator.nextInt(max_views_count);
+                record.add(Bytes.toBytes("item"), Bytes.toBytes("item_id"), Bytes.toBytes(Integer.toString(i)));
+                record.add(Bytes.toBytes("item"), Bytes.toBytes("views_count"), Bytes.toBytes(Integer.toString(total_views)));
 
                 rows.add(record);
+                if (i % BATCH_SIZE == 0) {
+                    hTable.put(rows);
+                    rows.clear();
+                }
             }
-            hTable.put(rows);
             hTable.close();
         }
         catch (Exception e) {
