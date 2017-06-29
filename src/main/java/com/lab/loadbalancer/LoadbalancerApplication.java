@@ -67,11 +67,11 @@ public class LoadbalancerApplication {
     RestTemplate restTemplate;
 
     @RequestMapping(value = "count", method = RequestMethod.GET)
-    public int countRequest(int itemId) {
+    public String countRequest(String itemId) {
         Meter meter = metrics.meter(GET_VIEWS_COUNT_METRIC + "-read");
         meter.mark();
 
-        int response = this.restTemplate.getForObject("http://backend/count?itemId={id}", Integer.class, itemId);
+        String response = this.restTemplate.getForObject("http://backend/count?itemId={id}", String.class, itemId);
         return response;
     }
 
